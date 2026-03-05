@@ -298,6 +298,29 @@ def cmd_optimize(workspace: Path, args) -> int:
     return 0
 
 
+def cmd_engram(workspace: Path, args) -> int:
+    """Engram — LLM-driven Observational Memory (Layer 6)."""
+    import subprocess
+    engram_cli = Path(__file__).resolve().parent / "engram_cli.py"
+    cmd_args = [sys.executable, str(engram_cli), str(workspace)]
+
+    sub_command = getattr(args, 'engram_command', None)
+    if sub_command:
+        cmd_args.append(sub_command)
+    else:
+        cmd_args.append("status")
+
+    thread = getattr(args, 'thread', None)
+    if thread:
+        cmd_args.extend(["--thread", thread])
+
+    if getattr(args, 'json', False):
+        cmd_args.append("--json")
+
+    result = subprocess.run(cmd_args)
+    return result.returncode
+
+
 def cmd_full(workspace: Path, args) -> int:
     """Run complete compression pipeline."""
     from compress_memory import compress_file, _collect_files, rule_compress
@@ -315,6 +338,23 @@ def cmd_full(workspace: Path, args) -> int:
         cmd_observe(workspace, observe_args)
     except Exception as e:
         print(f"  observe: skipped ({e})")
+
+    # 2b. Engram status check (non-blocking — Layer 6)
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lib.engram import EngramEngine
+        engram_engine = EngramEngine(workspace_path=workspace)
+        threads = engram_engine.storage.list_threads()
+        if threads:
+            total_engram_tokens = sum(
+                engram_engine.get_context(t)["stats"]["total_tokens"]
+                for t in threads
+            )
+            print(f"  engram: {len(threads)} thread(s), {total_engram_tokens:,} memory tokens")
+        else:
+            print("  engram: no threads yet (use 'engram' command to add)")
+    except Exception as e:
+        print(f"  engram: skipped ({e})")
 
     # 3. Compress (rule engine)
     files = _collect_files(str(workspace))
@@ -641,6 +681,7 @@ COMMAND_MAP = {
     "benchmark": cmd_benchmark,
     "install": cmd_install,
     "auto": cmd_auto,
+    "engram": cmd_engram,
 }
 
 
@@ -714,6 +755,18 @@ def build_parser() -> argparse.ArgumentParser:
     # auto
     p = sub.add_parser("auto", help="Auto-compress and report savings (every interaction)", parents=[_common])
     p.add_argument("--json", action="store_true")
+
+    # engram (Layer 6 — LLM-driven Observational Memory)
+    p = sub.add_parser("engram", help="Engram Observational Memory (Layer 6)", parents=[_common])
+    p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "engram_command",
+        nargs="?",
+        default="status",
+        choices=["observe", "reflect", "status", "ingest", "context", "daemon"],
+        help="Engram sub-command (default: status)",
+    )
+    p.add_argument("--thread", type=str, default=None, help="Thread identifier")
 
     return parser
 

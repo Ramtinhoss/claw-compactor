@@ -22,7 +22,50 @@ This will:
 
 The agent should run `auto` at session start and paste the report into chat so the user sees savings every time.
 
-**Cut your AI agent's token spend in half.** One command compresses your entire workspace — memory files, session transcripts, sub-agent context — using 5 layered compression techniques. Deterministic. Mostly lossless. No LLM required.
+## Engram — Real-Time LLM Memory (Layer 6)
+
+For long-running conversations or multi-session agent memory, use Engram:
+
+```bash
+# Set API key first
+export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
+
+# Check all thread statuses
+python3 scripts/engram_cli.py <workspace> status
+
+# Force compress a thread
+python3 scripts/engram_cli.py <workspace> observe --thread <thread-id>
+python3 scripts/engram_cli.py <workspace> reflect --thread <thread-id>
+
+# Get injectable context for system prompt
+python3 scripts/engram_cli.py <workspace> context --thread <thread-id>
+
+# Stream messages in real-time (daemon mode)
+python3 scripts/engram_cli.py <workspace> daemon --thread <thread-id>
+# Then pipe: echo '{"role":"user","content":"Hello"}' to stdin
+
+# Via unified entry point
+python3 scripts/mem_compress.py <workspace> engram status
+python3 scripts/mem_compress.py <workspace> engram observe --thread <thread-id>
+```
+
+### When to use Engram
+- **Multi-turn conversations** that exceed 30K tokens of context
+- **Long-running agent sessions** where you need to inject past context
+- **Cross-session memory** — observations persist across restarts
+- **Daemon mode** — pipe live messages for real-time compression
+
+### Engram vs. `observe`
+| Feature | `observe` (Layer 3) | Engram (Layer 6) |
+|---------|---------------------|------------------|
+| Input | OpenClaw session JSONL files | Any messages via API |
+| Trigger | Manual / cron | Auto on add_message() |
+| LLM | No (rule-based) | Yes (Anthropic/OpenAI) |
+| Output format | Plain observation MD | Structured 🔴🟡🟢 priority log |
+| Storage | memory/observations/ | memory/engram/{thread}/ |
+| Reflection | No | Yes (Reflector agent) |
+
+**Cut your AI agent's token spend in half.** One command compresses your entire workspace — memory files, session transcripts, sub-agent context — using 6 layered compression techniques. Deterministic layers require no LLM. Layer 6 (Engram) adds real-time LLM-driven memory.
 
 ## Features
 - **5 compression layers** working in sequence for maximum savings
