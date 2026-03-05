@@ -1,222 +1,350 @@
 ---
 name: claw-compactor
-description: "Claw Compactor v6.02 — 50%+ savings through rule-based compression, dictionary encoding, session observation compression, and progressive context loading. Auto mode: runs every interaction and reports savings."
+version: "1.0.0"
+description: >
+  Claw Compactor — 6-layer token compression skill for OpenClaw agents.
+  Cuts workspace token spend by 50–97% using deterministic rule-engines plus
+  Engram: a real-time, LLM-driven Observational Memory system.
+  Run at session start for automatic savings reporting.
 
-# Claw Compactor
-![Claw Compactor Banner](assets/banner.png)
+triggers:
+  - "compress memory"
+  - "compress workspace"
+  - "save tokens"
+  - "token savings"
+  - "compress context"
+  - "run engram"
+  - "engram observe"
+  - "engram reflect"
+  - "memory compression"
+  - "benchmark compression"
+---
 
-[![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/aeromomo/claw-compactor) [![Release](https://img.shields.io/github/v/release/aeromomo/claw-compactor?color=blue)](https://github.com/aeromomo/claw-compactor/releases) [![Tests](https://img.shields.io/badge/tests-800%20passed-brightgreen)](https://github.com/aeromomo/claw-compactor) [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://python.org) [![License](https://img.shields.io/badge/license-MIT-purple)](LICENSE) [![OpenClaw](https://img.shields.io/badge/OpenClaw-skill-orange)](https://openclaw.ai)
+# Claw Compactor — OpenClaw Skill Reference
 
-*"Cut your tokens. Keep your facts."*
+## Overview
 
-## Auto Mode (Every Interaction)
-Run at the start of every session or interaction:
+Claw Compactor reduces token usage across the full OpenClaw workspace using
+6 compression layers:
+
+| Layer | Name | Cost | Notes |
+|-------|------|------|-------|
+| 1 | Rule Engine | Free | Dedup, strip filler, merge sections |
+| 2 | Dictionary Encoding | Free | Auto-codebook, `$XX` substitution |
+| 3 | Observation Compression | Free | Session JSONL → structured summaries |
+| 4 | RLE Patterns | Free | Path/IP/enum shorthand |
+| 5 | Compressed Context Protocol | Free | Format abbreviations |
+| **6** | **Engram** | LLM API | Real-time Observational Memory |
+
+**Skill location:** `skills/claw-compactor/`  
+**Entry point:** `scripts/mem_compress.py`  
+**Engram CLI:** `scripts/engram_cli.py`
+
+---
+
+## Auto Mode (Recommended — Run at Session Start)
+
 ```bash
-python3 scripts/mem_compress.py <workspace> auto
+python3 skills/claw-compactor/scripts/mem_compress.py <workspace> auto
 ```
-This will:
-1. Compress all workspace files automatically
-2. Track token counts between runs
-3. Report exactly how many tokens saved since last run
-4. Show cumulative savings across all runs
 
-The agent should run `auto` at session start and paste the report into chat so the user sees savings every time.
+Automatically compresses all workspace files, tracks token counts between
+runs, and reports savings. Run this at the start of every session.
 
-## Engram — Real-Time LLM Memory (Layer 6)
+---
 
-For long-running conversations or multi-session agent memory, use Engram:
+## Core Commands
 
+### Full Pipeline (All Layers)
 ```bash
-# Set API key first
-export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
-
-# Check all thread statuses
-python3 scripts/engram_cli.py <workspace> status
-
-# Force compress a thread
-python3 scripts/engram_cli.py <workspace> observe --thread <thread-id>
-python3 scripts/engram_cli.py <workspace> reflect --thread <thread-id>
-
-# Get injectable context for system prompt
-python3 scripts/engram_cli.py <workspace> context --thread <thread-id>
-
-# Stream messages in real-time (daemon mode)
-python3 scripts/engram_cli.py <workspace> daemon --thread <thread-id>
-# Then pipe: echo '{"role":"user","content":"Hello"}' to stdin
-
-# Via unified entry point
-python3 scripts/mem_compress.py <workspace> engram status
-python3 scripts/mem_compress.py <workspace> engram observe --thread <thread-id>
+python3 scripts/mem_compress.py <workspace> full
 ```
+Runs all 5 deterministic layers in optimal order. Typical: 50%+ combined savings.
 
-### When to use Engram
-- **Multi-turn conversations** that exceed 30K tokens of context
-- **Long-running agent sessions** where you need to inject past context
-- **Cross-session memory** — observations persist across restarts
-- **Daemon mode** — pipe live messages for real-time compression
+### Benchmark (Non-Destructive)
+```bash
+python3 scripts/mem_compress.py <workspace> benchmark
+# JSON output:
+python3 scripts/mem_compress.py <workspace> benchmark --json
+```
+Dry-run report showing potential savings without writing any files.
 
-### Engram vs. `observe`
-| Feature | `observe` (Layer 3) | Engram (Layer 6) |
-|---------|---------------------|------------------|
-| Input | OpenClaw session JSONL files | Any messages via API |
-| Trigger | Manual / cron | Auto on add_message() |
-| LLM | No (rule-based) | Yes (Anthropic/OpenAI) |
-| Output format | Plain observation MD | Structured 🔴🟡🟢 priority log |
-| Storage | memory/observations/ | memory/engram/{thread}/ |
-| Reflection | No | Yes (Reflector agent) |
+### Individual Layers
+```bash
+# Layer 1: Rule-based compression
+python3 scripts/mem_compress.py <workspace> compress
 
-**Cut your AI agent's token spend in half.** One command compresses your entire workspace — memory files, session transcripts, sub-agent context — using 6 layered compression techniques. Deterministic layers require no LLM. Layer 6 (Engram) adds real-time LLM-driven memory.
+# Layer 2: Dictionary encoding
+python3 scripts/mem_compress.py <workspace> dict
 
-## Features
-- **5 compression layers** working in sequence for maximum savings
-- **Zero LLM cost** — all compression is rule-based and deterministic
-- **Lossless roundtrip** for dictionary, RLE, and rule-based compression
-- **~97% savings** on session transcripts via observation extraction
-- **Tiered summaries** (L0/L1/L2) for progressive context loading
-- **CJK-aware** — full Chinese/Japanese/Korean support
-- **One command** (`full`) runs everything in optimal order
+# Layer 3: Observation compression (session JSONL → summaries)
+python3 scripts/mem_compress.py <workspace> observe
 
-## 5 Compression Layers
-| 1 | Rule engine | Dedup lines, strip markdown filler, merge sections | 4-8% | |
-| 2 | Dictionary encoding | Auto-learned codebook, `$XX` substitution | 4-5% | |
-| 3 | Observation compression | Session JSONL → structured summaries | ~97% | * |
-| 4 | RLE patterns | Path shorthand (`$WS`), IP prefix, enum compaction | 1-2% | |
-| 5 | Compressed Context Protocol | ultra/medium/light abbreviation | 20-60% | * |
+# Layer 4: RLE pattern encoding (runs inside `compress`)
+# Layer 5: Tokenizer optimization
+python3 scripts/mem_compress.py <workspace> optimize
 
-\*Lossy techniques preserve all facts and decisions; only verbose formatting is removed.
+# Tiered summaries (L0/L1/L2)
+python3 scripts/mem_compress.py <workspace> tiers
 
-## Quick Start
-git clone https://github.com/aeromomo/claw-compactor.git
-cd claw-compactor
+# Cross-file deduplication
+python3 scripts/mem_compress.py <workspace> dedup
 
-# See how much you'd save (non-destructive)
-python3 scripts/mem_compress.py /path/to/workspace benchmark
+# Token count report
+python3 scripts/mem_compress.py <workspace> estimate
 
-# Compress everything
-python3 scripts/mem_compress.py /path/to/workspace full
-
-**Requirements:** Python 3.9+. Optional: `pip install tiktoken` for exact token counts (falls back to heuristic).
-
-## Architecture
-┌─────────────────────────────────────────────────────────────┐
-│ mem_compress.py │
-│ (unified entry point) │
-└──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬────┘
- │ │ │ │ │ │ │ │
- ▼ ▼ ▼ ▼ ▼ ▼ ▼ ▼
- estimate compress dict dedup observe tiers audit optimize
- └──────┴──────┴──┬───┴──────┴──────┴──────┴──────┘
- ▼
- ┌────────────────┐
- │ lib/ │
- │ tokens.py │ ← tiktoken or heuristic
- │ markdown.py │ ← section parsing
- │ dedup.py │ ← shingle hashing
- │ dictionary.py │ ← codebook compression
- │ rle.py │ ← path/IP/enum encoding
- │ tokenizer_ │
- │ optimizer.py │ ← format optimization
- │ config.py │ ← JSON config
- │ exceptions.py │ ← error types
- └────────────────┘
-
-## Commands
-All commands: `python3 scripts/mem_compress.py <workspace> <command> [options]`
-
-`full`, Description=Complete pipeline (all steps in order), Typical Savings=50%+ combined
-`benchmark`, Description=Dry-run performance report, Typical Savings=—
-`compress`, Description=Rule-based compression, Typical Savings=4-8%
-`dict`, Description=Dictionary encoding with auto-codebook, Typical Savings=4-5%
-`observe`, Description=Session transcript → observations, Typical Savings=~97%
-`tiers`, Description=Generate L0/L1/L2 summaries, Typical Savings=88-95% on sub-agent loads
-`dedup`, Description=Cross-file duplicate detection, Typical Savings=varies
-`estimate`, Description=Token count report, Typical Savings=—
-`audit`, Description=Workspace health check, Typical Savings=—
-`optimize`, Description=Tokenizer-level format fixes, Typical Savings=1-3%
+# Workspace health check
+python3 scripts/mem_compress.py <workspace> audit
+```
 
 ### Global Options
-- `--json` — Machine-readable JSON output
-- `--dry-run` — Preview changes without writing
-- `--since YYYY-MM-DD` — Filter sessions by date
-- `--auto-merge` — Auto-merge duplicates (dedup)
+```
+--json          Machine-readable JSON output
+--dry-run       Preview without writing files
+--since DATE    Filter sessions by date (YYYY-MM-DD)
+--auto-merge    Auto-merge duplicates (dedup command)
+```
 
-## Real-World Savings
-Session transcripts (observe), Typical Savings=**~97%**, Notes=Megabytes of JSONL → concise observation MD
-Verbose/new workspace, Typical Savings=**50-70%**, Notes=First run on unoptimized workspace
-Regular maintenance, Typical Savings=**10-20%**, Notes=Weekly runs on active workspace
-Already-optimized, Typical Savings=**3-12%**, Notes=Diminishing returns — workspace is clean
+---
 
-## cacheRetention — Complementary Optimization
-Before compression runs, enable **prompt caching** for a 90% discount on cached tokens:
+## Engram — Layer 6: Real-Time Observational Memory
 
-```json
-{
- "agents": {
- "defaults": {
- "models": {
- "anthropic/claude-opus-4-6": {
- "params": {
- "cacheRetention": "long"
- }
+Engram is the flagship layer. It operates as a live engine alongside conversations,
+automatically compressing messages into structured, priority-annotated knowledge.
 
-Compression reduces token count, caching reduces cost-per-token. Together: 50% compression + 90% cache discount = **95% effective cost reduction**.
+### Prerequisites
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # Preferred
+# or
+export OPENAI_API_KEY=sk-...          # OpenAI-compatible fallback
+export OPENAI_BASE_URL=https://...    # Optional: custom endpoint (local LLM, etc.)
+```
 
-## Heartbeat Automation
-Run weekly or on heartbeat:
+### Engram via Unified Entry Point
+```bash
+# Check all thread statuses
+python3 scripts/mem_compress.py <workspace> engram status
+
+# Force Observer for a thread
+python3 scripts/mem_compress.py <workspace> engram observe --thread <thread-id>
+
+# Force Reflector for a thread
+python3 scripts/mem_compress.py <workspace> engram reflect --thread <thread-id>
+
+# Print injectable context
+python3 scripts/mem_compress.py <workspace> engram context --thread <thread-id>
+```
+
+### Engram via Dedicated CLI
+```bash
+# Status: all threads
+python3 scripts/engram_cli.py <workspace> status
+
+# Status: single thread
+python3 scripts/engram_cli.py <workspace> status --thread <thread-id>
+
+# Force observe
+python3 scripts/engram_cli.py <workspace> observe --thread <thread-id>
+
+# Force reflect
+python3 scripts/engram_cli.py <workspace> reflect --thread <thread-id>
+
+# Import conversation from file (JSON array or JSONL)
+python3 scripts/engram_cli.py <workspace> ingest \
+    --thread <thread-id> --input /path/to/conversation.jsonl
+
+# Get injectable context string (ready for system prompt)
+python3 scripts/engram_cli.py <workspace> context --thread <thread-id>
+
+# JSON output for any command
+python3 scripts/engram_cli.py <workspace> status --json
+python3 scripts/engram_cli.py <workspace> context --thread <id> --json
+```
+
+### Engram Daemon Mode (Real-Time Streaming)
+```bash
+# Start daemon, pipe JSONL messages via stdin
+python3 scripts/engram_cli.py <workspace> daemon --thread <thread-id>
+
+# Pipe a message:
+echo '{"role":"user","content":"Hello!","timestamp":"12:00"}' | \
+    python3 scripts/engram_cli.py <workspace> daemon --thread <thread-id>
+
+# Control commands (send as JSONL):
+echo '{"__cmd":"observe"}'   # force observe now
+echo '{"__cmd":"reflect"}'   # force reflect now
+echo '{"__cmd":"status"}'    # print thread status JSON
+echo '{"__cmd":"quit"}'      # exit daemon
+
+# Quiet mode (suppress startup messages on stderr)
+python3 scripts/engram_cli.py <workspace> daemon --thread <id> --quiet
+```
+
+### Engram Python API
+```python
+from scripts.lib.engram import EngramEngine
+
+engine = EngramEngine(
+    workspace_path="/path/to/workspace",
+    observer_threshold=30_000,     # tokens before auto-observe
+    reflector_threshold=40_000,    # tokens before auto-reflect
+    anthropic_api_key="sk-ant-...", # or set ANTHROPIC_API_KEY env
+)
+
+# Add a message — auto-triggers observe/reflect when thresholds exceeded
+status = engine.add_message("thread-id", role="user", content="Hello!")
+# Returns: {"observed": bool, "reflected": bool, "pending_tokens": int, ...}
+
+# Manual trigger regardless of thresholds
+obs_text = engine.observe("thread-id")    # returns None if no pending msgs
+ref_text = engine.reflect("thread-id")   # returns None if no observations
+
+# Get full context dict
+ctx = engine.get_context("thread-id")
+# Returns: {"thread_id", "observations", "reflection", "recent_messages", "stats", "meta"}
+
+# Build injectable system context string
+ctx_str = engine.build_system_context("thread-id")
+# Ready to prepend to system prompt
+```
+
+### Engram Configuration Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (preferred) |
+| `OPENAI_API_KEY` | — | OpenAI-compatible API key |
+| `OPENAI_BASE_URL` | `https://api.openai.com` | Custom endpoint for local LLMs |
+| `OM_OBSERVER_THRESHOLD` | `30000` | Pending tokens before auto-observe |
+| `OM_REFLECTOR_THRESHOLD` | `40000` | Observation tokens before auto-reflect |
+| `OM_MODEL` | `claude-opus-4-5` | LLM model override |
+
+### Observation Format
+
+Engram produces structured, bilingual (EN/中文) priority-annotated logs:
+
+```
+Date: 2026-03-05
+- 🔴 12:10 User building OpenCompress; deadline one week / 用户在构建 OpenCompress，deadline 一周内
+  - 🔴 12:10 Using ModernBERT-large / 使用 ModernBERT-large
+  - 🟡 12:12 Discussed annotation strategy / 讨论了标注策略
+- 🟡 12:30 Deployment pipeline discussion on M3 Ultra
+- 🟢 12:45 User prefers concise replies
+```
+
+- 🔴 **Critical** — goals, deadlines, blockers, key decisions (never dropped)
+- 🟡 **Important** — technical details, ongoing work, preferences
+- 🟢 **Useful** — background, mentions, soft context
+
+### Memory Storage Layout
+
+```
+memory/engram/{thread_id}/
+├── pending.jsonl      # Unobserved message buffer (auto-cleared after observe)
+├── observations.md    # Observer output — append-only structured log
+├── reflections.md     # Reflector output — compressed long-term memory (overwrites)
+└── meta.json          # Timestamps and token counts
+```
+
+---
+
+## Integration with OpenClaw Memory System
+
+### System Prompt Injection
+
+Inject Engram context at the start of each session:
+
+```python
+from scripts.lib.engram import EngramEngine
+
+engine = EngramEngine(workspace_path)
+ctx_str = engine.build_system_context("my-session")
+if ctx_str:
+    system_prompt = ctx_str + "\n\n" + base_system_prompt
+```
+
+The `build_system_context()` output structure:
+```
+## Long-Term Memory (Reflections)
+<Reflector output — long-term compressed context>
+
+## Recent Observations
+<Last 200 lines of Observer output>
+
+<!-- engram_tokens: 1234 -->
+```
+
+### Combining Engram with Deterministic Layers
+
+After an Engram session, run the deterministic pipeline on the output files:
+
+```bash
+# Engram produces observations.md and reflections.md
+# Then apply deterministic compression to further reduce those:
+python3 scripts/mem_compress.py <workspace> full
+```
+
+### Recommended Workflow for Long-Running Agent Sessions
+
+1. **Session start:** inject `build_system_context()` into system prompt
+2. **Each message:** call `engine.add_message()` — auto-triggers observe/reflect
+3. **Session end / weekly cron:** run `full` pipeline on workspace
+4. **Multi-session continuity:** context persists in `memory/engram/{thread}/`
+
+---
+
+## OpenClaw Skill Installation
+
+To install as an OpenClaw skill, ensure the skill directory is available at:
+```
+~/.openclaw/workspace/skills/claw-compactor/
+```
+or configure the path in your OpenClaw skill registry.
+
+SKILL.md is read by the OpenClaw agent dispatcher. The `description` and
+`triggers` fields above control when this skill is automatically activated.
+
+---
+
+## Heartbeat / Cron Automation
 
 ```markdown
-
 ## Memory Maintenance (weekly)
 - python3 skills/claw-compactor/scripts/mem_compress.py <workspace> benchmark
 - If savings > 5%: run full pipeline
-- If pending transcripts: run observe
+- If pending Engram messages: run engram observe --thread <id>
+```
 
-Cron example:
-0 3 * * 0 cd /path/to/skills/claw-compactor && python3 scripts/mem_compress.py /path/to/workspace full
+Cron (Sunday 3am):
+```bash
+0 3 * * 0 cd /path/to/skills/claw-compactor && \
+  python3 scripts/mem_compress.py /path/to/workspace full
+```
 
-## Configuration
-Optional `claw-compactor-config.json` in workspace root:
+---
 
- "chars_per_token": 4,
- "level0_max_tokens": 200,
- "level1_max_tokens": 500,
- "dedup_similarity_threshold": 0.6,
- "dedup_shingle_size": 3
+## Output Artifacts Reference
 
-All fields optional — sensible defaults are used when absent.
+| Artifact | Location | Description |
+|----------|----------|-------------|
+| Dictionary codebook | `memory/.codebook.json` | Must travel with memory files |
+| Observed session log | `memory/.observed-sessions.json` | Tracks processed transcripts |
+| Layer 3 summaries | `memory/observations/` | Observation compression output |
+| Engram observations | `memory/engram/{thread}/observations.md` | Live Observer log |
+| Engram reflections | `memory/engram/{thread}/reflections.md` | Distilled long-term memory |
+| Level 0 summary | `memory/MEMORY-L0.md` | ~200 token ultra-compressed summary |
+| Level 1 summary | `memory/MEMORY-L1.md` | ~500 token compressed summary |
 
-## Artifacts
-- `memory/.codebook.json`: Dictionary codebook (must travel with memory files)
-- `memory/.observed-sessions.json`: Tracks processed transcripts
-- `memory/observations/`: Compressed session summaries
-- `memory/MEMORY-L0.md`: Level 0 summary (~200 tokens)
-
-## FAQ
-**Q: Will compression lose my data?**
-A: Rule engine, dictionary, RLE, and tokenizer optimization are fully lossless. Observation compression and CCP are lossy but preserve all facts and decisions.
-
-**Q: How does dictionary decompression work?**
-A: `decompress_text(text, codebook)` expands all `$XX` codes back. The codebook JSON must be present.
-
-**Q: Can I run individual steps?**
-A: Yes. Every command is independent: `compress`, `dict`, `observe`, `tiers`, `dedup`, `optimize`.
-
-**Q: What if tiktoken isn't installed?**
-A: Falls back to a CJK-aware heuristic (chars÷4). Results are ~90% accurate.
-
-**Q: Does it handle Chinese/Japanese/Unicode?**
-A: Yes. Full CJK support including character-aware token estimation and Chinese punctuation normalization.
+---
 
 ## Troubleshooting
-- **`FileNotFoundError` on workspace:** Ensure path points to workspace root (contains `memory/` or `MEMORY.md`)
-- **Dictionary decompression fails:** Check `memory/.codebook.json` exists and is valid JSON
-- **Zero savings on `benchmark`:** Workspace is already optimized — nothing to do
-- **`observe` finds no transcripts:** Check sessions directory for `.jsonl` files
-- **Token count seems wrong:** Install tiktoken: `pip3 install tiktoken`
 
-## Credits
-- Inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by thedotmack
-- Built by Bot777 for [OpenClaw](https://openclaw.ai)
-
-## License
-MIT
+| Problem | Solution |
+|---------|----------|
+| `FileNotFoundError` on workspace | Point path to workspace root containing `memory/` |
+| Dictionary decompression fails | Check `memory/.codebook.json` is valid JSON |
+| Zero savings on `benchmark` | Workspace already optimized |
+| `observe` finds no transcripts | Check `sessions/` for `.jsonl` files |
+| Engram: "no API key configured" | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` |
+| Engram Observer returns `None` | No pending messages for that thread |
+| Token counts seem wrong | Install tiktoken: `pip3 install tiktoken` |
