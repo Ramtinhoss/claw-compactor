@@ -71,6 +71,9 @@ DEFAULT_MODEL_OPENAI = "gpt-4o"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 
+MAX_OBSERVER_INPUT_TOKENS = 80_000   # max tokens per Observer LLM call
+MAX_REFLECTOR_INPUT_TOKENS = 80_000  # max tokens per Reflector LLM call
+
 
 # ---------------------------------------------------------------------------
 # EngramEngine
@@ -425,18 +428,99 @@ class EngramEngine:
     # ------------------------------------------------------------------
 
     def _run_observer(self, thread_id: str, messages: List[dict]) -> str:
-        """Run Observer LLM, persist result, clear pending queue."""
-        observation = self._llm_observe(messages)
-        ts = _now_utc()
-        self.storage.append_observation(thread_id, observation, timestamp=ts)
-        self.storage.clear_pending(thread_id)
-        logger.debug(
-            "Engram: Observer done (thread=%s, chars=%d)", thread_id, len(observation)
+        """Run Observer LLM, persist result, clear pending queue.
+
+        If messages exceed MAX_OBSERVER_INPUT_TOKENS, process in batches.
+        """
+        total_tokens = _count_messages_tokens(messages)
+
+        if total_tokens <= MAX_OBSERVER_INPUT_TOKENS:
+            # Normal path — single call
+            observation = self._llm_observe(messages)
+            ts = _now_utc()
+            self.storage.append_observation(thread_id, observation, timestamp=ts)
+            self.storage.clear_pending(thread_id)
+            logger.debug(
+                "Engram: Observer done (thread=%s, chars=%d)", thread_id, len(observation)
+            )
+            return observation
+
+        # Batch path — split messages into chunks that fit within the token limit
+        logger.info(
+            "Engram: Observer batching (thread=%s, total_tokens=%d, max=%d)",
+            thread_id, total_tokens, MAX_OBSERVER_INPUT_TOKENS,
         )
-        return observation
+
+        all_observations: List[str] = []
+        batch_start = 0
+
+        while batch_start < len(messages):
+            # Build a batch that fits within the token limit
+            batch: List[dict] = []
+            batch_tokens = 0
+            next_start = batch_start
+
+            for i in range(batch_start, len(messages)):
+                msg = messages[i]
+                msg_tokens = _count_messages_tokens([msg])
+                if batch_tokens + msg_tokens > MAX_OBSERVER_INPUT_TOKENS and batch:
+                    # This message would overflow; stop here
+                    break
+                batch.append(msg)
+                batch_tokens += msg_tokens
+                next_start = i + 1
+
+            if not batch:
+                # Single message exceeds limit — include it anyway to avoid infinite loop
+                batch = [messages[batch_start]]
+                next_start = batch_start + 1
+
+            logger.info(
+                "Engram: Observer batch %d (thread=%s, msgs=%d, tokens=%d)",
+                len(all_observations) + 1, thread_id, len(batch), batch_tokens,
+            )
+
+            observation = self._llm_observe(batch)
+            all_observations.append(observation)
+            batch_start = next_start
+
+        # Combine all batch observations
+        combined = "\n\n---\n\n".join(all_observations)
+        ts = _now_utc()
+        self.storage.append_observation(thread_id, combined, timestamp=ts)
+        self.storage.clear_pending(thread_id)
+
+        logger.debug(
+            "Engram: Observer done (thread=%s, batches=%d, chars=%d)",
+            thread_id, len(all_observations), len(combined),
+        )
+        return combined
 
     def _run_reflector(self, thread_id: str, observations: str) -> str:
-        """Run Reflector LLM, persist result (overwrites previous reflection)."""
+        """Run Reflector LLM, persist result (overwrites previous reflection).
+
+        If observations exceed MAX_REFLECTOR_INPUT_TOKENS, truncate to the most
+        recent content (tail) to stay within the LLM context window.
+        """
+        obs_tokens = estimate_tokens(observations)
+
+        if obs_tokens > MAX_REFLECTOR_INPUT_TOKENS:
+            # Keep the most recent observations (tail)
+            lines = observations.splitlines()
+            truncated: List[str] = []
+            running_tokens = 0
+            for line in reversed(lines):
+                line_tokens = estimate_tokens(line)
+                if running_tokens + line_tokens > MAX_REFLECTOR_INPUT_TOKENS:
+                    break
+                truncated.append(line)
+                running_tokens += line_tokens
+            observations = "\n".join(reversed(truncated))
+            logger.info(
+                "Engram: Reflector input truncated (thread=%s, %d -> %d tokens)",
+                thread_id, obs_tokens, running_tokens,
+            )
+
         reflection = self._llm_reflect(observations)
         ts = _now_utc()
         self.storage.write_reflection(thread_id, reflection, timestamp=ts)

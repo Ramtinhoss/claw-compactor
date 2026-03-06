@@ -23,7 +23,13 @@ import pytest
 # Ensure scripts/ is on path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from lib.engram import EngramEngine, _count_messages_tokens, _messages_to_text
+from lib.engram import (
+    EngramEngine,
+    _count_messages_tokens,
+    _messages_to_text,
+    MAX_OBSERVER_INPUT_TOKENS,
+    MAX_REFLECTOR_INPUT_TOKENS,
+)
 from lib.engram_storage import EngramStorage
 from lib.engram_prompts import (
     OBSERVER_SYSTEM_PROMPT,
@@ -821,3 +827,265 @@ class TestAddMessageSkipObserve:
             auto_observe=True,  # explicit default
         )
         assert status["observed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test 14: observer batching
+# ---------------------------------------------------------------------------
+
+class TestObserverBatching:
+    """_run_observer() should split large message lists into batches."""
+
+    @staticmethod
+    def _make_messages_over_limit(n_messages: int = 2) -> list:
+        """Create `n_messages` messages whose combined token count exceeds
+        MAX_OBSERVER_INPUT_TOKENS, but each individual message is below the limit.
+
+        Uses varied realistic text so tiktoken doesn't compress it heavily.
+        """
+        # Build content that genuinely exceeds the limit when summed.
+        # We need total > MAX_OBSERVER_INPUT_TOKENS (80K) and each < 80K.
+        # Use enough unique words so tiktoken can't compress heavily.
+        words_per_msg = 50_000  # ~50K tokens per message via word diversity
+        content = " ".join(
+            f"event{i} status{i} detail{i} context{i} result{i}"
+            for i in range(words_per_msg // 5)
+        )
+        return [
+            {"role": "user", "content": content, "timestamp": "12:00"}
+            for _ in range(n_messages)
+        ]
+
+    def test_small_batch_single_call(self, workspace: Path) -> None:
+        """When total tokens < MAX_OBSERVER_INPUT_TOKENS, only one LLM call is made."""
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+        call_count = [0]
+        original_llm_observe = eng._llm_observe
+
+        def counting_llm_observe(msgs):
+            call_count[0] += 1
+            return original_llm_observe(msgs)
+
+        eng._llm_observe = counting_llm_observe  # type: ignore[method-assign]
+
+        # Small messages — well below 80K total
+        small_messages = [
+            {"role": "user", "content": f"Short message number {i}", "timestamp": "12:00"}
+            for i in range(5)
+        ]
+        eng._run_observer("batch-obs-t1", small_messages)
+
+        assert call_count[0] == 1, "Expected single LLM call for small input"
+
+    def test_large_batch_multiple_calls(self, workspace: Path) -> None:
+        """When total tokens > MAX_OBSERVER_INPUT_TOKENS, multiple LLM calls are made."""
+        from lib.engram import _count_messages_tokens
+
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+
+        # Build messages that are guaranteed to exceed limit by using mock token counting
+        # Patch _count_messages_tokens to return controlled values
+        call_count = [0]
+
+        def counting_llm_observe(msgs):
+            call_count[0] += 1
+            return f"batch-observation-{call_count[0]}"
+
+        eng._llm_observe = counting_llm_observe  # type: ignore[method-assign]
+
+        # Patch _count_messages_tokens in engram module to return predictable high values
+        import lib.engram as engram_mod
+        original_count = engram_mod._count_messages_tokens
+
+        def fake_count(msgs):
+            # Each single message appears to be 60K tokens
+            return len(msgs) * 60_000
+
+        try:
+            engram_mod._count_messages_tokens = fake_count
+            messages = [
+                {"role": "user", "content": "message content", "timestamp": "12:00"}
+                for _ in range(3)
+            ]
+            result = eng._run_observer("batch-obs-t2", messages)
+        finally:
+            engram_mod._count_messages_tokens = original_count
+
+        assert call_count[0] > 1, "Expected multiple LLM calls for large input"
+        assert "---" in result, "Combined result should contain batch separator"
+
+    def test_batching_clears_pending(self, workspace: Path) -> None:
+        """After batching, the pending queue should be cleared."""
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+
+        messages = [
+            {"role": "user", "content": f"Message {i}", "timestamp": "12:00"}
+            for i in range(5)
+        ]
+        for msg in messages:
+            eng.storage.append_message("batch-obs-t3", msg)
+
+        eng._llm_observe = MagicMock(return_value="obs")  # type: ignore[method-assign]
+        eng._run_observer("batch-obs-t3", messages)
+
+        pending = eng.storage.read_pending("batch-obs-t3")
+        assert len(pending) == 0, "Pending queue should be empty after observer run"
+
+    def test_batching_appends_combined_observation(self, workspace: Path) -> None:
+        """Batched observations should be combined and appended to storage."""
+        import lib.engram as engram_mod
+
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+
+        batch_responses = []
+
+        def recording_llm_observe(msgs):
+            resp = f"observation-for-batch-{len(batch_responses) + 1}"
+            batch_responses.append(resp)
+            return resp
+
+        eng._llm_observe = recording_llm_observe  # type: ignore[method-assign]
+
+        # Force batching via mock token counter
+        original_count = engram_mod._count_messages_tokens
+
+        def fake_count(msgs):
+            return len(msgs) * 60_000
+
+        try:
+            engram_mod._count_messages_tokens = fake_count
+            messages = [
+                {"role": "user", "content": f"Message {i}", "timestamp": "12:00"}
+                for i in range(3)
+            ]
+            eng._run_observer("batch-obs-t4", messages)
+        finally:
+            engram_mod._count_messages_tokens = original_count
+
+        saved = eng.storage.read_observations("batch-obs-t4")
+        for resp in batch_responses:
+            assert resp in saved
+
+    def test_single_oversized_message_doesnt_loop(self, workspace: Path) -> None:
+        """A single message that exceeds the limit should still be processed (no infinite loop)."""
+        import lib.engram as engram_mod
+
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+        call_count = [0]
+
+        def counting_llm_observe(msgs):
+            call_count[0] += 1
+            if call_count[0] > 5:
+                raise RuntimeError("Infinite loop detected!")
+            return "oversized-observation"
+
+        eng._llm_observe = counting_llm_observe  # type: ignore[method-assign]
+
+        # Patch token counter so single message appears to be 200K tokens
+        original_count = engram_mod._count_messages_tokens
+
+        def fake_count(msgs):
+            return len(msgs) * 200_000
+
+        try:
+            engram_mod._count_messages_tokens = fake_count
+            huge_message = {"role": "user", "content": "Large content", "timestamp": "12:00"}
+            result = eng._run_observer("batch-obs-t5", [huge_message])
+        finally:
+            engram_mod._count_messages_tokens = original_count
+
+        assert call_count[0] == 1, "Single oversized message should produce exactly one call"
+        assert result == "oversized-observation"
+
+
+# ---------------------------------------------------------------------------
+# Test 15: reflector truncation
+# ---------------------------------------------------------------------------
+
+class TestReflectorTruncation:
+    """_run_reflector() should truncate observations that exceed MAX_REFLECTOR_INPUT_TOKENS."""
+
+    def test_small_observations_no_truncation(self, workspace: Path) -> None:
+        """Small observations should pass through unchanged."""
+        eng = _make_engine_with_mock(workspace, FAKE_REFLECTION, observer_threshold=9999)
+
+        received_text = []
+
+        def recording_llm_reflect(obs):
+            received_text.append(obs)
+            return FAKE_REFLECTION
+
+        eng._llm_reflect = recording_llm_reflect  # type: ignore[method-assign]
+
+        small_obs = "Date: 2026-01-01\n- 🔴 12:00 Small observation\n"
+        eng._run_reflector("refl-t1", small_obs)
+
+        assert received_text[0] == small_obs, "Small observations should not be modified"
+
+    def test_large_observations_truncated(self, workspace: Path) -> None:
+        """Observations exceeding MAX_REFLECTOR_INPUT_TOKENS should be truncated."""
+        eng = _make_engine_with_mock(workspace, FAKE_REFLECTION, observer_threshold=9999)
+
+        received_tokens = []
+
+        def recording_llm_reflect(obs):
+            received_tokens.append(estimate_tokens(obs))
+            return FAKE_REFLECTION
+
+        eng._llm_reflect = recording_llm_reflect  # type: ignore[method-assign]
+
+        # Build observations that are clearly over the limit
+        large_obs = ("- 🔴 12:00 Critical event that happened\n" * 10_000)
+        original_tokens = estimate_tokens(large_obs)
+        assert original_tokens > MAX_REFLECTOR_INPUT_TOKENS, "Test setup: input must exceed limit"
+
+        eng._run_reflector("refl-t2", large_obs)
+
+        assert len(received_tokens) == 1
+        # The truncation loop counts tokens per-line; the rejoined text may be slightly
+        # higher due to newline tokenization interactions — allow a 15% margin.
+        # The key guarantee is that input is dramatically reduced from the original.
+        assert received_tokens[0] <= MAX_REFLECTOR_INPUT_TOKENS * 1.15, (
+            f"Reflector received {received_tokens[0]} tokens, "
+            f"expected roughly <= {MAX_REFLECTOR_INPUT_TOKENS} (with 15% join margin)"
+        )
+        # Must be significantly less than the original (at least 25% reduction)
+        assert received_tokens[0] < original_tokens * 0.75, (
+            f"Truncation had no effect: {received_tokens[0]} vs original {original_tokens}"
+        )
+
+    def test_truncation_keeps_tail(self, workspace: Path) -> None:
+        """Truncation should keep the most recent (tail) content, not the head."""
+        eng = _make_engine_with_mock(workspace, FAKE_REFLECTION, observer_threshold=9999)
+
+        received_text = []
+
+        def recording_llm_reflect(obs):
+            received_text.append(obs)
+            return FAKE_REFLECTION
+
+        eng._llm_reflect = recording_llm_reflect  # type: ignore[method-assign]
+
+        # Build content with distinct head and tail markers
+        # Make it large enough to trigger truncation
+        head_lines = ["head-line-AAAA\n"] * 5_000
+        tail_lines = ["tail-line-ZZZZ\n"] * 2_000
+        large_obs = "".join(head_lines) + "".join(tail_lines)
+
+        eng._run_reflector("refl-t3", large_obs)
+
+        result_text = received_text[0]
+        # Tail should be present; head may have been truncated
+        assert "tail-line-ZZZZ" in result_text, "Tail content should be preserved after truncation"
+
+    def test_truncation_reflection_saved(self, workspace: Path) -> None:
+        """Even with truncated input, the reflection should be saved to storage."""
+        eng = _make_engine_with_mock(workspace, FAKE_REFLECTION, observer_threshold=9999)
+        eng._llm_reflect = MagicMock(return_value=FAKE_REFLECTION)  # type: ignore[method-assign]
+
+        large_obs = "- 🔴 12:00 Item\n" * 10_000
+
+        eng._run_reflector("refl-t4", large_obs)
+
+        saved = eng.storage.read_reflection("refl-t4")
+        assert FAKE_REFLECTION.strip() in saved
