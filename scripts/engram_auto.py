@@ -52,40 +52,88 @@ _CHANNEL_MAP: Dict[str, str] = {
 }
 
 _RE_CHANNEL_NAME = re.compile(r"#([\w][\w-]*)")
-_RE_CHANNEL_ID = re.compile(r"channel id:(\d+)")
-_RE_CRON = re.compile(r'cron job["\s]+([^"\s]+)', re.IGNORECASE)
+_RE_CHANNEL_ID = re.compile(r"channel[^\S\r\n]+id:(\d+)", re.IGNORECASE)
+_RE_CRON = re.compile(r'cron job\s+"([^"]+)"', re.IGNORECASE)
 _RE_SUBAGENT = re.compile(r"subagent", re.IGNORECASE)
 
+# Thread-map cache file (relative to storage_base, populated at runtime)
+_THREAD_MAP_FILENAME = ".thread-map.json"
 
-def detect_thread_id(session_file: Path) -> str:
+
+def detect_thread_id(
+    session_file: Path,
+    thread_map_path: Optional[Path] = None,
+) -> str:
     """
     Detect the thread/channel this session belongs to by inspecting its content.
 
-    Reads up to the first 10 user/system messages and applies heuristics:
-      - Discord channel name → discord-{name}
-      - cron job name        → cron-{job_name}
+    Reads up to the first 20 user/system messages and applies heuristics:
       - subagent context     → subagent
+      - cron job name        → cron-{job_name}
+      - channel id:\d+       → discord-channel-{id}  (via channel-ID mapping)
+      - Discord channel name → discord-{name}
       - fallback             → openclaw-main
 
+    Results are cached to *thread_map_path* (a JSON file) keyed by session stem
+    so repeated runs are fast.
+
     Args:
-        session_file: Path to the session JSONL file.
+        session_file:     Path to the session JSONL file.
+        thread_map_path:  Optional path to .thread-map.json cache file.
 
     Returns:
         Thread-ID string suitable for use as Engram thread identifier.
     """
+    session_id = session_file.stem
+
+    # --- Check cache first ---
+    if thread_map_path is not None and thread_map_path.exists():
+        try:
+            cache: Dict[str, str] = json.loads(
+                thread_map_path.read_text(encoding="utf-8")
+            )
+            if session_id in cache:
+                return cache[session_id]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    thread_id = _detect_thread_id_from_file(session_file)
+
+    # --- Persist to cache ---
+    if thread_map_path is not None:
+        try:
+            cache = {}
+            if thread_map_path.exists():
+                try:
+                    cache = json.loads(thread_map_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    pass
+            cache[session_id] = thread_id
+            thread_map_path.write_text(
+                json.dumps(cache, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.debug("detect_thread_id: cannot write cache %s: %s", thread_map_path, exc)
+
+    return thread_id
+
+
+def _detect_thread_id_from_file(session_file: Path) -> str:
+    """Inner detection logic — no caching."""
     try:
         lines_checked = 0
         messages_checked = 0
 
         with session_file.open("r", encoding="utf-8", errors="replace") as fh:
             for raw in fh:
-                if messages_checked >= 10:
+                if messages_checked >= 20:
                     break
                 raw = raw.strip()
                 if not raw:
                     continue
                 lines_checked += 1
-                if lines_checked > 200:
+                if lines_checked > 400:
                     # Don't scan forever through non-message lines
                     break
 
@@ -127,14 +175,18 @@ def detect_thread_id(session_file: Path) -> str:
                     job_name = m.group(1).strip('"\'').strip()
                     return f"cron-{job_name}"
 
+                # --- channel id check ---
+                ch_id_m = _RE_CHANNEL_ID.search(text)
+                if ch_id_m:
+                    return f"discord-channel-{ch_id_m.group(1)}"
+
                 # --- Discord channel name ---
                 for ch_match in _RE_CHANNEL_NAME.finditer(text):
                     ch_name = ch_match.group(1).lower()
                     if ch_name in _CHANNEL_MAP:
                         return _CHANNEL_MAP[ch_name]
-                    # Generic discord channel
-                    if _RE_CHANNEL_ID.search(text):
-                        return f"discord-{ch_name}"
+                    # Generic discord channel (name only, no ID)
+                    return f"discord-{ch_name}"
 
     except OSError as exc:
         logger.warning("detect_thread_id: cannot read %s: %s", session_file, exc)
@@ -260,6 +312,13 @@ class EngramAutoRunner:
         self._processed_cache: set = self._load_processed()
         self._processed_lock = threading.Lock()
 
+        # Thread-map cache for detect_thread_id()
+        self._thread_map_path = self.storage_base / _THREAD_MAP_FILENAME
+
+        # Error-type dedup: only log each error class once per run
+        self._reported_errors: set = set()
+        self._reported_errors_lock = threading.Lock()
+
         # Engine kwargs (shared config; each thread constructs its own engine
         # instance to avoid cross-thread state issues)
         self._engine_kwargs = engram_engine_kwargs(engram_cfg)
@@ -283,6 +342,43 @@ class EngramAutoRunner:
                 self._processed_cache.add(cache_key)
                 with self._processed_marker.open("a", encoding="utf-8") as f:
                     f.write(cache_key + "\n")
+
+    def _cleanup_processed_marker(self) -> None:
+        """
+        Prune the processed-sessions marker file, keeping only records from
+        the last 7 days.  Records are expected to be in the form
+        ``{session_id}:{mtime}`` where mtime is a Unix timestamp (integer).
+        Lines that don't match the format are dropped.
+        """
+        if not self._processed_marker.exists():
+            return
+        cutoff = time.time() - 7 * 24 * 3600  # 7 days ago
+        kept: List[str] = []
+        for line in self._processed_marker.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.rsplit(":", 1)
+            if len(parts) == 2:
+                try:
+                    if float(parts[1]) >= cutoff:
+                        kept.append(line)
+                    # else: drop (older than 7 days)
+                except ValueError:
+                    kept.append(line)  # unknown format — keep to be safe
+            else:
+                kept.append(line)
+        with self._processed_lock:
+            self._processed_marker.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            self._processed_cache = set(kept)
+
+    def _report_error_once(self, error_type: str, message: str) -> None:
+        """Log an error only once per error_type per run (deduplication)."""
+        with self._reported_errors_lock:
+            if error_type in self._reported_errors:
+                return
+            self._reported_errors.add(error_type)
+        logger.error(message)
 
     # ------------------------------------------------------------------ #
     # Session discovery                                                   #
@@ -326,8 +422,8 @@ class EngramAutoRunner:
             logger.debug("Skip (unchanged): %s", session_id)
             return session_id, "", 0
 
-        # Detect channel
-        thread_id = detect_thread_id(session_file)
+        # Detect channel (with thread-map cache)
+        thread_id = detect_thread_id(session_file, thread_map_path=self._thread_map_path)
         logger.info("Session %s → thread '%s'", session_id, thread_id)
 
         if self.dry_run:
@@ -364,19 +460,18 @@ class EngramAutoRunner:
                         except json.JSONDecodeError:
                             pass
         except OSError as exc:
-            logger.error("  Cannot read converted file %s: %s", tmp_out, exc)
+            self._report_error_once(
+                "read_converted",
+                f"  Cannot read converted file {tmp_out}: {exc}",
+            )
             return session_id, thread_id, 0
 
-        # Write to storage under lock
+        # Write to storage under lock using batch_ingest for efficiency
         with lock:
-            ingested = 0
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                timestamp = msg.get("timestamp")
-                if content:
-                    engine.add_message(thread_id, role=role, content=content, timestamp=timestamp)
-                    ingested += 1
+            valid_messages = [m for m in messages if m.get("content")]
+            if valid_messages:
+                engine.batch_ingest(thread_id, valid_messages)
+            ingested = len(valid_messages)
 
         self._mark_processed(cache_key)
         logger.info("  ✓ Ingested %d messages into thread '%s'", ingested, thread_id)
@@ -391,14 +486,29 @@ class EngramAutoRunner:
         Process all pending sessions concurrently.
 
         Returns a dict mapping thread_id → total messages ingested.
+        Also prints a run-end summary: processed/skipped/failed counts and
+        pending token totals per thread.
         """
         sessions = self.find_sessions()
+
+        # Reset per-run error dedup
+        with self._reported_errors_lock:
+            self._reported_errors.clear()
+
+        # Prune old processed-session records (keep last 7 days)
+        self._cleanup_processed_marker()
+
         if not sessions:
             logger.info("No recent sessions to process.")
+            print("Run summary: 0 sessions found.")
             return {}
 
         totals: Dict[str, int] = {}
         totals_lock = threading.Lock()
+        processed_count = 0
+        skipped_count = 0
+        failed_count = 0
+        counts_lock = threading.Lock()
 
         with tempfile.TemporaryDirectory(prefix="engram_auto_") as tmp_str:
             tmp_dir = Path(tmp_str)
@@ -414,11 +524,38 @@ class EngramAutoRunner:
                     sf = futures[fut]
                     try:
                         _, thread_id, count = fut.result()
+                        with counts_lock:
+                            if not thread_id:
+                                skipped_count += 1
+                            else:
+                                processed_count += 1
                         if thread_id and count > 0:
                             with totals_lock:
                                 totals[thread_id] = totals.get(thread_id, 0) + count
                     except Exception as exc:  # noqa: BLE001
-                        logger.error("Error processing %s: %s", sf, exc)
+                        err_type = type(exc).__name__
+                        self._report_error_once(
+                            f"process_session:{err_type}",
+                            f"Error processing {sf}: {exc}",
+                        )
+                        with counts_lock:
+                            failed_count += 1
+
+        # --- Run-end summary ---
+        print(
+            f"Run summary: {processed_count} processed, "
+            f"{skipped_count} skipped (unchanged), "
+            f"{failed_count} failed"
+        )
+        if totals:
+            # Show pending token counts per thread
+            storage = EngramStorage(self.workspace)
+            from lib.engram import _count_messages_tokens
+            print("Thread pending tokens:")
+            for tid in sorted(totals.keys()):
+                pending = storage.read_pending(tid)
+                pt = _count_messages_tokens(pending)
+                print(f"  {tid}: {totals[tid]} new msgs ingested, {pt} pending tokens")
 
         return totals
 

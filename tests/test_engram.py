@@ -660,3 +660,164 @@ class TestEdgeCases:
         assert len(messages) == 2
         assert messages[0]["content"] == "Good line"
         assert messages[1]["content"] == "Also good"
+
+
+# ---------------------------------------------------------------------------
+# Test 11: HTTP retry logic
+# ---------------------------------------------------------------------------
+
+class TestHttpRetry:
+    """_http_post() should retry on transient errors and not retry on 401/403."""
+
+    def test_http_retry_on_429(self, workspace: Path) -> None:
+        """Should retry on HTTP 429 and eventually succeed."""
+        import urllib.error
+        from lib.engram import _http_post
+
+        call_count = 0
+
+        def fake_urlopen(req, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                # Simulate 429 on first two attempts
+                err = urllib.error.HTTPError(
+                    url="http://test", code=429,
+                    msg="Too Many Requests", hdrs=None, fp=None,  # type: ignore[arg-type]
+                )
+                # HTTPError.read() must be callable
+                err.read = lambda: b"rate limited"
+                raise err
+            # Third attempt succeeds: return a file-like object
+            import io
+            import json as _json
+
+            class FakeResp:
+                def read(self):
+                    return _json.dumps({"ok": True}).encode()
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    pass
+
+            return FakeResp()
+
+        with patch("lib.engram._HTTPX_AVAILABLE", False), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+             patch("time.sleep"):  # skip actual delays
+            result = _http_post("http://test", {}, {}, max_retries=3)
+
+        assert result == {"ok": True}
+        assert call_count == 3
+
+    def test_http_no_retry_on_401(self, workspace: Path) -> None:
+        """Should raise immediately on HTTP 401 (no retry)."""
+        import urllib.error
+        from lib.engram import _http_post
+
+        call_count = 0
+
+        def fake_urlopen(req, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            err = urllib.error.HTTPError(
+                url="http://test", code=401,
+                msg="Unauthorized", hdrs=None, fp=None,  # type: ignore[arg-type]
+            )
+            err.read = lambda: b"unauthorized"
+            raise err
+
+        with patch("lib.engram._HTTPX_AVAILABLE", False), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+             patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="401"):
+                _http_post("http://test", {}, {}, max_retries=3)
+
+        # Must have been called exactly once — no retries
+        assert call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 12: batch_ingest
+# ---------------------------------------------------------------------------
+
+class TestBatchIngest:
+    """batch_ingest() should write all messages and check thresholds once."""
+
+    def test_batch_ingest_writes_all_messages(self, workspace: Path) -> None:
+        """All messages in the batch should appear in pending storage."""
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+        messages = [
+            {"role": "user", "content": f"Message {i}", "timestamp": "12:00"}
+            for i in range(10)
+        ]
+        eng.batch_ingest("batch-t1", messages)
+        pending = eng.storage.read_pending("batch-t1")
+        assert len(pending) == 10
+
+    def test_batch_ingest_triggers_observe_once(self, workspace: Path) -> None:
+        """batch_ingest() should only check thresholds at the end (one observe max)."""
+        # Threshold low enough to trigger on the batch, but the mock tracks calls
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=10)
+        observe_calls = []
+        original_run_observer = eng._run_observer
+
+        def counting_run_observer(thread_id, pending):
+            observe_calls.append(thread_id)
+            return original_run_observer(thread_id, pending)
+
+        eng._run_observer = counting_run_observer  # type: ignore[method-assign]
+
+        messages = [
+            {"role": "user", "content": "X" * 50, "timestamp": "12:00"}
+            for _ in range(5)
+        ]
+        eng.batch_ingest("batch-t2", messages)
+        # Should have triggered at most once (at the end), not 5 times
+        assert len(observe_calls) <= 1
+
+    def test_batch_ingest_returns_status(self, workspace: Path) -> None:
+        """batch_ingest() should return a valid status dict."""
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=9999)
+        messages = [{"role": "user", "content": "hello"}]
+        status = eng.batch_ingest("batch-t3", messages)
+        assert "observed" in status
+        assert "reflected" in status
+        assert "pending_tokens" in status
+        assert "error" in status
+
+
+# ---------------------------------------------------------------------------
+# Test 13: add_message skip observe
+# ---------------------------------------------------------------------------
+
+class TestAddMessageSkipObserve:
+    """add_message(auto_observe=False) should skip threshold checks."""
+
+    def test_skip_observe_only_writes_pending(self, workspace: Path) -> None:
+        """With auto_observe=False, message is written but observer never fires."""
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=5)
+        # Even with low threshold and large content, no observe should fire
+        status = eng.add_message(
+            "skip-t1", role="user",
+            content="A" * 500,  # well above threshold
+            auto_observe=False,
+        )
+        assert status["observed"] is False
+        assert status["reflected"] is False
+        assert status["error"] is None
+
+        # Message should still be in pending
+        pending = eng.storage.read_pending("skip-t1")
+        assert len(pending) == 1
+        assert "A" * 100 in pending[0]["content"]
+
+    def test_auto_observe_true_still_triggers(self, workspace: Path) -> None:
+        """Default auto_observe=True should still trigger the observer."""
+        eng = _make_engine_with_mock(workspace, FAKE_OBSERVATION, observer_threshold=5)
+        status = eng.add_message(
+            "skip-t2", role="user",
+            content="A" * 500,
+            auto_observe=True,  # explicit default
+        )
+        assert status["observed"] is True

@@ -159,15 +159,17 @@ def cmd_ingest(engine: EngramEngine, args: argparse.Namespace) -> int:
         print("No messages found in input file.", file=sys.stderr)
         return 1
 
-    count = 0
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        timestamp = msg.get("timestamp")
-        if not content:
-            continue
-        engine.add_message(thread_id, role=role, content=content, timestamp=timestamp)
-        count += 1
+    # Filter out messages with no content before batch ingestion
+    valid_messages = [
+        {"role": msg.get("role", "user"), "content": msg.get("content", ""),
+         "timestamp": msg.get("timestamp")}
+        for msg in messages
+        if msg.get("content")
+    ]
+    count = len(valid_messages)
+
+    if count > 0:
+        engine.batch_ingest(thread_id, valid_messages)
 
     if getattr(args, "json", False):
         print(json.dumps({"thread_id": thread_id, "ingested": count}))

@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -174,15 +175,19 @@ class EngramEngine:
         role: str,
         content: str,
         timestamp: Optional[str] = None,
+        auto_observe: bool = True,
     ) -> Dict[str, Any]:
         """
         Add a message to the thread and auto-trigger observe/reflect if needed.
 
         Args:
-            thread_id: Conversation thread identifier.
-            role:      Message role (``"user"`` / ``"assistant"`` / ``"system"``).
-            content:   Message text content.
-            timestamp: Optional ``HH:MM`` or ISO timestamp string.
+            thread_id:    Conversation thread identifier.
+            role:         Message role (``"user"`` / ``"assistant"`` / ``"system"``).
+            content:      Message text content.
+            timestamp:    Optional ``HH:MM`` or ISO timestamp string.
+            auto_observe: If False, skip threshold check (only write to pending).
+                          Use False for bulk ingestion; call _check_thresholds()
+                          manually at the end. Defaults to True (backward-compatible).
 
         Returns:
             Status dict::
@@ -199,6 +204,28 @@ class EngramEngine:
         message = {"role": role, "content": content, "timestamp": ts}
         self.storage.append_message(thread_id, message)
 
+        if not auto_observe:
+            return {
+                "observed": False,
+                "reflected": False,
+                "pending_tokens": 0,
+                "observation_tokens": 0,
+                "error": None,
+            }
+
+        return self._check_thresholds(thread_id)
+
+    def _check_thresholds(self, thread_id: str) -> Dict[str, Any]:
+        """
+        Check Observer and Reflector thresholds and trigger as needed.
+
+        Args:
+            thread_id: Conversation thread identifier.
+
+        Returns:
+            Status dict with ``observed``, ``reflected``, ``pending_tokens``,
+            ``observation_tokens``, and ``error`` keys.
+        """
         status: Dict[str, Any] = {
             "observed": False,
             "reflected": False,
@@ -245,6 +272,40 @@ class EngramEngine:
                     status["error"] = str(exc)
 
         return status
+
+    def batch_ingest(
+        self,
+        thread_id: str,
+        messages: List[Dict[str, Any]],
+        batch_size: int = 500,
+    ) -> Dict[str, Any]:
+        """
+        Bulk-write messages then check thresholds once at the end.
+
+        More efficient than calling add_message() in a loop when ingesting
+        large amounts of historical data, because threshold checks (which
+        may trigger expensive LLM calls) are deferred until all messages
+        have been written.
+
+        Args:
+            thread_id:  Conversation thread identifier.
+            messages:   List of message dicts with keys ``role``, ``content``,
+                        and optional ``timestamp``.
+            batch_size: Unused parameter kept for API future-proofing.
+
+        Returns:
+            Status dict from the final ``_check_thresholds()`` call.
+        """
+        for msg in messages:
+            self.add_message(
+                thread_id,
+                msg["role"],
+                msg["content"],
+                msg.get("timestamp"),
+                auto_observe=False,
+            )
+        # Check thresholds once after all messages are written
+        return self._check_thresholds(thread_id)
 
     def observe(self, thread_id: str) -> Optional[str]:
         """
@@ -477,27 +538,112 @@ class EngramEngine:
 # HTTP helper (httpx preferred, urllib fallback)
 # ---------------------------------------------------------------------------
 
-def _http_post(url: str, headers: dict, body: dict) -> dict:
-    """POST JSON body to *url* and return parsed JSON response."""
+# HTTP status codes that should not be retried (client errors)
+_NO_RETRY_CODES = {400, 401, 403}
+# HTTP status codes that are transient and worth retrying
+_RETRY_CODES = {429, 500, 502, 503, 504}
+# Exception types that indicate transient network issues
+_RETRY_EXCEPTIONS = (ConnectionError, ConnectionResetError, TimeoutError,
+                     urllib.error.URLError)
+
+
+def _http_post(url: str, headers: dict, body: dict, max_retries: int = 3) -> dict:
+    """
+    POST JSON body to *url* and return parsed JSON response.
+
+    Retries on transient HTTP errors (429, 500, 502, 503, 504) and network
+    exceptions using exponential back-off: 2, 4, 8 seconds between attempts.
+    Non-retriable errors (400, 401, 403) are raised immediately.
+
+    Args:
+        url:         Target URL.
+        headers:     HTTP headers dict.
+        body:        Request body (will be JSON-serialised).
+        max_retries: Maximum number of retry attempts (default 3).
+
+    Returns:
+        Parsed JSON response dict.
+
+    Raises:
+        RuntimeError: On non-retriable HTTP errors or after exhausting retries.
+    """
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     if _HTTPX_AVAILABLE and _httpx is not None:
-        with _httpx.Client(timeout=120.0) as client:
-            resp = client.post(url, headers=headers, content=payload)
-            resp.raise_for_status()
-            return resp.json()
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            try:
+                with _httpx.Client(timeout=120.0) as client:
+                    resp = client.post(url, headers=headers, content=payload)
+                    if resp.status_code in _NO_RETRY_CODES:
+                        raise RuntimeError(
+                            f"Engram HTTP {resp.status_code} from {url}: {resp.text}"
+                        )
+                    if resp.status_code in _RETRY_CODES and attempt < max_retries:
+                        delay = 2 ** (attempt + 1)
+                        logger.warning(
+                            "Engram HTTP %d, retry %d/%d in %ds…",
+                            resp.status_code, attempt + 1, max_retries, delay,
+                        )
+                        time.sleep(delay)
+                        last_exc = RuntimeError(
+                            f"Engram HTTP {resp.status_code} from {url}"
+                        )
+                        continue
+                    resp.raise_for_status()
+                    return resp.json()
+            except _RETRY_EXCEPTIONS as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    delay = 2 ** (attempt + 1)
+                    logger.warning(
+                        "Engram network error (%s), retry %d/%d in %ds…",
+                        exc, attempt + 1, max_retries, delay,
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+        raise last_exc or RuntimeError(f"Engram: max retries exceeded for {url}")
 
     # Fallback: stdlib urllib
-    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        body_text = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Engram HTTP {exc.code} from {url}: {body_text}"
-        ) from exc
+    last_exc2: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            if exc.code in _NO_RETRY_CODES:
+                body_text = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"Engram HTTP {exc.code} from {url}: {body_text}"
+                ) from exc
+            if exc.code in _RETRY_CODES and attempt < max_retries:
+                delay = 2 ** (attempt + 1)
+                logger.warning(
+                    "Engram HTTP %d, retry %d/%d in %ds…",
+                    exc.code, attempt + 1, max_retries, delay,
+                )
+                time.sleep(delay)
+                last_exc2 = exc
+                continue
+            body_text = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Engram HTTP {exc.code} from {url}: {body_text}"
+            ) from exc
+        except _RETRY_EXCEPTIONS as exc:
+            last_exc2 = exc
+            if attempt < max_retries:
+                delay = 2 ** (attempt + 1)
+                logger.warning(
+                    "Engram network error (%s), retry %d/%d in %ds…",
+                    exc, attempt + 1, max_retries, delay,
+                )
+                time.sleep(delay)
+            else:
+                raise
+    raise last_exc2 or RuntimeError(f"Engram: max retries exceeded for {url}")
 
 
 # ---------------------------------------------------------------------------

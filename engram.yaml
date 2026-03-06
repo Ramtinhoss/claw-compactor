@@ -21,8 +21,8 @@ llm:
 threads:
   # Default thresholds for all thread IDs (can be overridden per thread below)
   default:
-    observer_threshold: 15000    # pending-message tokens before Observer fires
-    reflector_threshold: 20000   # accumulated-observation tokens before Reflector fires
+    observer_threshold: 10000    # pending-message tokens before Observer fires
+    reflector_threshold: 15000   # accumulated-observation tokens before Reflector fires
 
   # Per-thread overrides (optional).  Key is the thread_id.
   # example:
