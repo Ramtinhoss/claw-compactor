@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: Claw Compactor
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - name: "Bot777"
+  - name: "OpenClaw Contributors"
+repository-code: "https://github.com/aeromomo/claw-compactor"
+url: "https://openclaw.ai"
+license: MIT
+keywords:
+  - token compression
+  - LLM
+  - AI agent
+  - context window
+  - prompt compression
+  - cost reduction
+  - workspace compression
+version: "1.0.0"
+date-released: "2026-03-09"
+abstract: >-
+  Claw Compactor is a 6-layer token compression engine for LLM agents.
+  It reduces workspace context token spend by 50–97% using deterministic
+  rule-engines plus Engram, a real-time LLM-driven Observational Memory system.

@@ -1,0 +1,31 @@
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share your ideas for improving Claw Compactor's token compression capabilities!
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe your idea for improving token compression
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: How would this help your LLM workflow?
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Related Compression Layer
+      options:
+        - L1 - Rule Engine
+        - L2 - Dictionary Encoding
+        - L3 - Observation Compression
+        - L4 - RLE Patterns
+        - L5 - Compressed Context Protocol
+        - L6 - Engram
+        - New Layer / Other

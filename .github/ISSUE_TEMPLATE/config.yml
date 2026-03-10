@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OpenClaw Community
+    url: https://discord.com/invite/clawd
+    about: Join the OpenClaw Discord for support and discussion
+  - name: Documentation
+    url: https://docs.openclaw.ai
+    about: Check the docs before opening an issue

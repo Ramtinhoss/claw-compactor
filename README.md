@@ -1,3 +1,31 @@
+<!--
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Claw Compactor",
+  "description": "Open-source LLM token compression tool that reduces AI agent costs by up to 97% using 5-layer deterministic context compression",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Cross-platform",
+  "softwareVersion": "1.0.0",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://github.com/aeromomo/claw-compactor",
+  "downloadUrl": "https://github.com/aeromomo/claw-compactor",
+  "author": {
+    "@type": "Organization",
+    "name": "OpenClaw",
+    "url": "https://openclaw.ai"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "keywords": "token compression, LLM, AI agent, prompt compression, context window optimization, cost reduction"
+}
+</script>
+-->
+
 # Claw Compactor — LLM Token Compression & Context Reduction Tool
 
 ![Claw Compactor Banner](assets/banner.png)
@@ -8,12 +36,29 @@
 [![License](https://img.shields.io/badge/license-MIT-purple)](LICENSE)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-skill-orange)](https://openclaw.ai)
 [![Release](https://img.shields.io/github/v/release/aeromomo/claw-compactor?color=blue)](https://github.com/aeromomo/claw-compactor/releases)
+[![Stars](https://img.shields.io/github/stars/aeromomo/claw-compactor?style=social)](https://github.com/aeromomo/claw-compactor)
+[![PyPI](https://img.shields.io/pypi/v/claw-compactor?color=blue)](https://pypi.org/project/claw-compactor/)
+[![Downloads](https://img.shields.io/github/downloads/aeromomo/claw-compactor/total)](https://github.com/aeromomo/claw-compactor/releases)
 
 > **The open-source LLM token compression tool that cuts AI agent costs by up to 97%.**
 
-Claw Compactor is a **token compression** and **context reduction** engine for LLM-powered AI agents. It compresses workspace memory, session transcripts, and prompt context using 5 deterministic compression layers — **no LLM calls required**.
+---
 
-Built for [OpenClaw](https://openclaw.ai) agents. Works with any LLM workflow that needs **token saving** and **prompt compression**.
+## What is Claw Compactor?
+
+**Claw Compactor** is an open-source **LLM token compression** engine that reduces AI agent costs by up to 97%. It compresses workspace memory, session transcripts, and prompt context using 5 deterministic compression layers — completely free, with **no LLM inference required**.
+
+If you're building AI agents with large context windows (100K+ tokens), Claw Compactor can save you thousands of dollars per month by compressing what gets loaded into the model context before it reaches the LLM.
+
+Built for [OpenClaw](https://openclaw.ai) agents. Works with **any LLM workflow** — ChatGPT, Claude, GPT-4, Gemini, Llama, or any OpenAI-compatible API — that needs **token saving** and **prompt compression**.
+
+### Who Should Use Claw Compactor?
+
+- **AI agent developers** building autonomous agents (OpenClaw, AutoGPT, CrewAI, LangChain, Semantic Kernel)
+- **LLM application builders** managing large context windows with ChatGPT, Claude, or GPT-4
+- **Teams running multi-agent systems** where token costs multiply across sub-agents
+- **Anyone paying for LLM API calls** who wants to reduce their bill without losing context quality
+- **Open-source AI projects** looking for free, deterministic prompt compression
 
 ---
 
@@ -208,20 +253,25 @@ Performance: **<2 seconds** per file, typically **10–20% token reduction** per
 
 ---
 
-## Comparison with Other Token Compression Tools
+## Claw Compactor vs LLMLingua vs Other Token Compression Tools
 
-| Feature | Claw Compactor | LLMLingua | Prompt Compression (generic) |
-|---------|---------------|-----------|------------------------------|
-| LLM required | ❌ No | ✅ Yes (inference) | ✅ Usually |
-| Token reduction | Up to 97% | 20–50% | 10–30% |
-| Latency overhead | <50ms | 200ms+ | varies |
-| Lossless layers | 3 of 5 | 0 | 0 |
-| Workspace-level | ✅ | ❌ | ❌ |
-| CJK support | ✅ | Partial | Partial |
-| Cost to run | $0 | LLM inference cost | varies |
-| OpenClaw native | ✅ | ❌ | ❌ |
+How does Claw Compactor compare to other **LLM token compression** and **prompt compression** tools?
 
-Claw Compactor outperforms LLMLingua-2 on ROUGE-L at 0.3 and 0.5 compression rates ([benchmark details](docs/benchmarks.md)).
+| Feature | Claw Compactor | LLMLingua-2 | SelectiveContext | Prompt Compression (generic) |
+|---------|---------------|-------------|-----------------|------------------------------|
+| **LLM required** | ❌ No (zero cost) | ✅ Yes (inference cost) | ✅ Yes | ✅ Usually |
+| **Max token reduction** | **Up to 97%** | 20–50% | 15–40% | 10–30% |
+| **Latency** | <50ms | 200ms+ | 100ms+ | varies |
+| **Lossless layers** | 3 of 5 ✅ | 0 | 0 | 0 |
+| **Workspace-level compression** | ✅ Full workspace | ❌ Per-prompt only | ❌ Per-prompt only | ❌ Per-prompt only |
+| **CJK support** | ✅ Full | ⚠️ Partial | ❌ No | ⚠️ Partial |
+| **ROUGE-L @ rate=0.3** | **0.653** | 0.346 | — | — |
+| **ROUGE-L @ rate=0.5** | **0.723** | 0.570 | — | — |
+| **Cost to run** | $0 | LLM inference cost | LLM inference cost | varies |
+| **Integration** | OpenClaw native, standalone | Python library | Python library | varies |
+| **License** | MIT | MIT | MIT | varies |
+
+**Benchmark result:** Claw Compactor outperforms LLMLingua-2 by **+88.2% on ROUGE-L** at 0.3 compression rate and **+26.8%** at 0.5 compression rate. [Full benchmark results →](benchmark/RESULTS.md)
 
 ---
 
@@ -327,9 +377,39 @@ A: Yes. Claw Compactor is a standalone Python tool. OpenClaw integration (hooks,
 
 ---
 
-## Keywords
+## Installation
 
-LLM token compression, token reduction, token saving, prompt compression, context compression, context window optimization, AI agent token optimization, LLM cost reduction, token optimization, context pruning, AI cost saving, OpenClaw token compression, workspace compression, memory compression, LLM context compression, AI token management.
+```bash
+# Clone from GitHub
+git clone https://github.com/aeromomo/claw-compactor.git
+cd claw-compactor
+
+# Optional: install for exact token counting
+pip install tiktoken
+
+# Or install as a Python package (with all extras)
+pip install -e ".[accurate]"
+
+# Development install (includes pytest)
+pip install -e ".[dev,accurate]"
+```
+
+**Requirements:** Python 3.9+. No other dependencies required — tiktoken is optional for exact token counts (falls back to CJK-aware heuristic).
+
+---
+
+## Related Projects & Ecosystem
+
+- **[OpenClaw](https://openclaw.ai)** — The AI agent platform that Claw Compactor was built for
+- **[ClawhubAI](https://clawhub.com)** — Discover more AI agent skills and tools
+- **[OpenClaw Discord](https://discord.com/invite/clawd)** — Community support and discussion
+- **[OpenClaw Docs](https://docs.openclaw.ai)** — Full documentation
+
+---
+
+## Tags
+
+`token-compression` `llm-tools` `prompt-compression` `context-compression` `ai-agent` `cost-reduction` `context-window-optimization` `workspace-compression` `memory-compression` `openclaw` `python` `developer-tools` `ai-infrastructure` `llm-cost-reduction` `token-optimization`
 
 ---
 
@@ -340,4 +420,4 @@ LLM token compression, token reduction, token saving, prompt compression, contex
 
 ## License
 
-MIT
+[MIT](LICENSE) — Free for commercial and personal use.
