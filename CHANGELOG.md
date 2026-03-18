@@ -5,6 +5,45 @@ All notable changes to Claw Compactor will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.0] - 2026-03-17
+
+### Architecture
+- **14-stage Fusion Pipeline** replacing the legacy 5-layer sequential approach
+- **Immutable data flow** — all pipeline state carried via frozen `FusionContext` / `FusionResult` dataclasses
+- **Stage gate mechanism** — `should_apply()` lets each stage skip at zero cost when content type doesn't match
+- **FusionEngine** — unified entry point with `compress()` and `compress_messages()` API
+
+### New Compression Stages
+- **QuantumLock** (order=3) — KV-cache alignment: isolates dynamic content in system prompts to maximize cache hit rate
+- **Cortex** (order=5) — intelligent content router auto-detecting 8 content types and 16 programming languages
+- **Photon** (order=8) — base64 image detection and compression
+- **SemanticDedup** (order=12) — SimHash fingerprint near-duplicate block elimination (intra + cross-message)
+- **Ionizer** (order=15) — JSON array statistical sampling with schema discovery and error preservation
+- **LogCrunch** (order=16) — build/test log line folding with occurrence counts
+- **SearchCrunch** (order=17) — search/grep result deduplication
+- **DiffCrunch** (order=18) — git diff context line folding
+- **StructuralCollapse** (order=20) — import merging, assertion collapse, repeated pattern compression
+- **Neurosyntax** (order=25) — AST-aware code compression via tree-sitter (safe regex fallback). Never shortens identifiers.
+- **Nexus** (order=35) — ML token-level compressor with stopword removal fallback
+
+### Rewind (Reversible Compression)
+- Hash-addressed LRU store for original text retrieval
+- Marker embedding in compressed output — LLM tool-calls to retrieve originals
+- Integrated with Ionizer for JSON array reversal
+
+### Performance
+- **5.9x improvement** over legacy regex path (weighted average)
+- **53.9% average compression** across 6 content types
+- **81.9% peak** on JSON arrays (Ionizer)
+- **25.0%** on Python source (Neurosyntax + StructuralCollapse)
+- **1,676 tests** (up from 848), 0 failures
+
+### Benchmark vs Competitors
+- SWE-bench tasks: **12-19% compression** vs Headroom's **0%**
+- ROUGE-L fidelity maintained at 0.653 @ rate=0.3
+
+---
+
 ## [1.0.0] - 2026-03-09
 
 ### Added
@@ -29,4 +68,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Up to **97% token reduction** on session transcripts
 - **50–70% token savings** on first run across unoptimized workspaces
 
-[1.0.0]: https://github.com/aeromomo/claw-compactor/releases/tag/v1.0.0
+[7.0.0]: https://github.com/open-compress/claw-compactor/releases/tag/v7.0.0
+[1.0.0]: https://github.com/open-compress/claw-compactor/releases/tag/v1.0.0

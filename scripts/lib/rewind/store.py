@@ -1,6 +1,18 @@
-"""Rewind store: LRU cache for original text, enabling reversible compression.
+"""Rewind store: hash-addressed LRU cache enabling reversible compression.
 
-Part of claw-compactor. License: MIT.
+When a compression stage (e.g. Ionizer) discards significant content, it
+stores the original in RewindStore and embeds a hash marker in the compressed
+output.  If the LLM later needs the full original, it calls the Rewind tool
+with the marker ID — the store returns the original text from its LRU cache.
+
+This gives the best of both worlds: aggressive compression for token savings,
+with on-demand retrieval when the LLM determines it needs more detail.
+
+Storage is bounded by max_entries (LRU eviction) and ttl_seconds (time-based
+expiry).  Hash IDs are 24-char hex SHA-256 prefixes — collision probability
+is negligible for the expected cache sizes.
+
+Part of claw-compactor v7. License: MIT.
 """
 from __future__ import annotations
 import hashlib

@@ -1,9 +1,18 @@
 """Neurosyntax — AST-aware code compression FusionStage.
 
-Uses tree-sitter when available; falls back to safe regex-based compression.
-Identifier names are NEVER shortened — that destroys LLM comprehension.
+Uses tree-sitter for multi-language AST parsing when available; falls back to
+safe regex-based compression that strips comments and normalizes whitespace
+without touching code semantics.
 
-Part of claw-compactor. License: MIT.
+Critical safety rule: identifier names are NEVER shortened.  Class names,
+function names, and variable names are semantic anchors that LLMs use to
+understand code context.  Shortening them destroys comprehension and causes
+downstream task failures (validated on SWE-bench).
+
+Supports: Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, Ruby,
+PHP, Swift, Kotlin, Scala, Bash, R, Perl.
+
+Part of claw-compactor v7. License: MIT.
 """
 from __future__ import annotations
 

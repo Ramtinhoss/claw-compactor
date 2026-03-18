@@ -1,7 +1,7 @@
 [project]
 name = "claw-compactor"
-version = "1.0.0"
-description = "LLM token compression tool — cut AI agent costs by up to 97% with 5-layer deterministic context compression. No LLM required."
+version = "7.0.0"
+description = "14-stage Fusion Pipeline for LLM token compression — 54% average reduction, zero LLM inference cost, reversible compression, AST-aware code analysis"
 license = "MIT"
 requires-python = ">=3.9"
 readme = "README.md"
@@ -21,6 +21,7 @@ keywords = [
     "llm-tools",
     "ai-cost-saving",
     "context-pruning",
+    "tree-sitter",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

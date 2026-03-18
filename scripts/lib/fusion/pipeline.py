@@ -1,6 +1,14 @@
-"""Fusion pipeline engine: runs a chain of FusionStages sequentially.
+"""Fusion pipeline engine: ordered chain of FusionStages with immutable data flow.
 
-Part of claw-compactor. License: MIT.
+Stages are sorted by their ``order`` attribute at construction time.  At runtime,
+each stage's timed_apply() is called sequentially — the compressed output from
+stage N becomes the input FusionContext for stage N+1.  Stages may propagate
+context_updates (e.g. Cortex setting content_type="code") that modify the
+context for all downstream stages.
+
+The pipeline is immutable: add() returns a new FusionPipeline instance.
+
+Part of claw-compactor v7. License: MIT.
 """
 from __future__ import annotations
 import logging

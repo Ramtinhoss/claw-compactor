@@ -1,6 +1,28 @@
-"""Fusion stage base classes for Claw Compactor pipeline.
+"""Fusion stage base classes for the Claw Compactor pipeline.
 
-Part of claw-compactor. License: MIT.
+This module defines the three core abstractions that all 14 pipeline stages
+build upon:
+
+    FusionContext   Immutable snapshot of the text being compressed, along with
+                    detected content type, language, role, and metadata.  Flows
+                    forward through the pipeline — each stage receives the
+                    previous stage's output as a new FusionContext.
+
+    FusionResult    Immutable output from a single stage: the compressed text,
+                    token counts, timing, Rewind markers, and optional context
+                    overrides for downstream stages.
+
+    FusionStage     Abstract base class.  Subclasses implement should_apply()
+                    (gating) and apply() (compression).  The pipeline calls
+                    timed_apply() which wraps both with timing and skip logic.
+
+Design invariants:
+    - All dataclasses are frozen — no mutation after construction.
+    - Stages are stateless functions of (FusionContext -> FusionResult).
+    - Stage ordering is declarative (the ``order`` class attribute) and
+      resolved by FusionPipeline at construction time.
+
+Part of claw-compactor v7. License: MIT.
 """
 from __future__ import annotations
 import time

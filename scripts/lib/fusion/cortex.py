@@ -1,9 +1,13 @@
 """Cortex — intelligent content router for the Fusion Pipeline.
 
-Runs first (order=5) and detects content_type + language, propagating
-them into FusionContext so downstream stages can make type-aware decisions.
+Cortex is the pipeline's "brain" — it runs at order=5 (before all compressor
+stages) and auto-detects content type (code, json, log, diff, search, text)
+and programming language (16 languages supported) by analyzing structural
+patterns, keywords, and syntax markers.  Detection results are propagated
+into FusionContext via context_updates, so every downstream stage can make
+type-aware compression decisions without redundant analysis.
 
-Part of claw-compactor. License: MIT.
+Part of claw-compactor v7. License: MIT.
 """
 from __future__ import annotations
 
